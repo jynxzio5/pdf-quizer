@@ -15,6 +15,6 @@
     "env": {
         "PYTHONPATH": ".",
         "FLASK_ENV": "production",
-        "FLASK_APP": "wsgi.py"
+        "FLASK_APP": "app.py"
     }
 }
