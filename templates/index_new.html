@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>محول PDF إلى أسئلة</title>
+    <!-- Vue.js -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <!-- Swiper CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swiper@8/swiper-bundle.min.css" />
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons/font/bootstrap-icons.css" rel="stylesheet">
+    <!-- Arabic Font -->
+    <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f8f9fa;
+            font-family: 'Tajawal', sans-serif;
+        }
+        .container {
+            max-width: 800px;
+            margin-top: 2rem;
+        }
+        .upload-area {
+            border: 2px dashed #dee2e6;
+            border-radius: 10px;
+            padding: 2rem;
+            text-align: center;
+            background-color: white;
+            transition: all 0.3s ease;
+        }
+        .upload-area:hover {
+            border-color: #0d6efd;
+        }
+        .swiper {
+            width: 100%;
+            padding: 2rem 0;
+        }
+        .swiper-slide {
+            background-color: white;
+            border-radius: 10px;
+            padding: 2rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .flashcard {
+            perspective: 1000px;
+            height: 200px;
+        }
+        .flashcard-inner {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            text-align: center;
+            transition: transform 0.8s;
+            transform-style: preserve-3d;
+            cursor: pointer;
+        }
+        .flashcard.flipped .flashcard-inner {
+            transform: rotateY(180deg);
+        }
+        .flashcard-front, .flashcard-back {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            backface-visibility: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+            border-radius: 10px;
+            background-color: white;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .flashcard-back {
+            transform: rotateY(180deg);
+            background-color: #f8f9fa;
+        }
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+        }
+        .loading-spinner {
+            width: 4rem;
+            height: 4rem;
+        }
+        .btn {
+            font-family: 'Tajawal', sans-serif;
+            font-weight: 500;
+        }
+        .option-btn {
+            width: 100%;
+            margin-bottom: 0.5rem;
+            text-align: right;
+            white-space: normal;
+            height: auto;
+            padding: 0.5rem 1rem;
+        }
+        .correct {
+            background-color: #28a745;
+            color: white;
+        }
+        .incorrect {
+            background-color: #dc3545;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <div class="container">
+            <h1 class="text-center mb-4">محول PDF إلى أسئلة</h1>
+            
+            <div class="upload-area mb-4">
+                <form @submit.prevent="uploadFile">
+                    <div class="mb-3">
+                        <label for="pdfFile" class="form-label">اختر ملف PDF</label>
+                        <input type="file" class="form-control" id="pdfFile" accept=".pdf" @change="handleFileChange" required>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">نوع الأسئلة</label>
+                        <div class="d-flex justify-content-center gap-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="questionType" id="mcq" value="mcq" v-model="questionType">
+                                <label class="form-check-label" for="mcq">اختيار من متعدد</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="questionType" id="essay" value="essay" v-model="questionType">
+                                <label class="form-check-label" for="essay">أسئلة مقالية</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="questionType" id="flashcards" value="flashcards" v-model="questionType">
+                                <label class="form-check-label" for="flashcards">بطاقات تعليمية</label>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary" :disabled="!selectedFile">تحويل</button>
+                </form>
+            </div>
+
+            <div v-if="error" class="alert alert-danger" role="alert">
+                {{ error }}
+            </div>
+
+            <div v-if="results.length > 0" class="results-section">
+                <!-- Swiper for MCQ and Essay Questions -->
+                <div v-if="questionType !== 'flashcards'" class="swiper">
+                    <div class="swiper-wrapper">
+                        <div class="swiper-slide" v-for="(item, index) in results" :key="index">
+                            <!-- MCQ Question -->
+                            <div v-if="questionType === 'mcq'" class="mcq-question">
+                                <h5 class="mb-3">{{ item.question }}</h5>
+                                <div class="options">
+                                    <button v-for="(option, optIndex) in item.options" 
+                                            :key="optIndex"
+                                            class="btn btn-outline-primary option-btn"
+                                            :class="{
+                                                'correct': item.answered && option === item.correct_answer,
+                                                'incorrect': item.answered && option === item.selectedAnswer && option !== item.correct_answer
+                                            }"
+                                            @click="checkAnswer(index, option)"
+                                            :disabled="item.answered">
+                                        {{ option }}
+                                    </button>
+                                </div>
+                            </div>
+                            <!-- Essay Question -->
+                            <div v-if="questionType === 'essay'" class="essay-question">
+                                <h5>{{ item.question }}</h5>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="swiper-pagination"></div>
+                    <div class="swiper-button-prev"></div>
+                    <div class="swiper-button-next"></div>
+                </div>
+
+                <!-- Flashcards -->
+                <div v-if="questionType === 'flashcards'" class="swiper">
+                    <div class="swiper-wrapper">
+                        <div class="swiper-slide" v-for="(card, index) in results" :key="index">
+                            <div class="flashcard" :class="{ flipped: card.isFlipped }" @click="flipCard(index)">
+                                <div class="flashcard-inner">
+                                    <div class="flashcard-front">
+                                        <h5>{{ card.front }}</h5>
+                                    </div>
+                                    <div class="flashcard-back">
+                                        <p>{{ card.back }}</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="swiper-pagination"></div>
+                    <div class="swiper-button-prev"></div>
+                    <div class="swiper-button-next"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Loading Overlay -->
+        <div v-if="loading" class="loading-overlay">
+            <div class="spinner-border text-light loading-spinner" role="status">
+                <span class="visually-hidden">جاري التحميل...</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/swiper@8/swiper-bundle.min.js"></script>
+    <script>
+        Vue.createApp({
+            data() {
+                return {
+                    selectedFile: null,
+                    questionType: 'mcq',
+                    results: [],
+                    error: null,
+                    loading: false,
+                    swiper: null
+                }
+            },
+            methods: {
+                handleFileChange(event) {
+                    this.selectedFile = event.target.files[0];
+                    this.error = null;
+                },
+                async uploadFile() {
+                    if (!this.selectedFile) return;
+                    
+                    this.loading = true;
+                    this.error = null;
+                    this.results = [];
+                    
+                    const formData = new FormData();
+                    formData.append('file', this.selectedFile);
+                    formData.append('type', this.questionType);
+                    
+                    try {
+                        const response = await fetch('/upload', {
+                            method: 'POST',
+                            body: formData
+                        });
+                        
+                        const data = await response.json();
+                        
+                        if (response.ok) {
+                            this.results = data.result;
+                            if (this.questionType === 'mcq') {
+                                this.results = this.results.map(q => ({...q, answered: false, selectedAnswer: null}));
+                            } else if (this.questionType === 'flashcards') {
+                                this.results = this.results.map(card => ({...card, isFlipped: false}));
+                            }
+                            this.$nextTick(() => {
+                                this.initSwiper();
+                            });
+                        } else {
+                            this.error = data.error || 'حدث خطأ غير متوقع';
+                        }
+                    } catch (err) {
+                        this.error = 'حدث خطأ أثناء معالجة الملف. الرجاء المحاولة لاحقًا.';
+                        console.error(err);
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+                initSwiper() {
+                    if (this.swiper) {
+                        this.swiper.destroy();
+                    }
+                    
+                    this.$nextTick(() => {
+                        this.swiper = new Swiper('.swiper', {
+                            pagination: {
+                                el: '.swiper-pagination',
+                                type: 'bullets',
+                                clickable: true
+                            },
+                            navigation: {
+                                nextEl: '.swiper-button-next',
+                                prevEl: '.swiper-button-prev'
+                            },
+                            slidesPerView: 1,
+                            spaceBetween: 30,
+                            loop: false
+                        });
+                    });
+                },
+                checkAnswer(index, selectedAnswer) {
+                    if (!this.results[index].answered) {
+                        this.results[index].answered = true;
+                        this.results[index].selectedAnswer = selectedAnswer;
+                    }
+                },
+                flipCard(index) {
+                    this.results[index].isFlipped = !this.results[index].isFlipped;
+                }
+            },
+            watch: {
+                questionType() {
+                    this.results = [];
+                    this.error = null;
+                    if (this.swiper) {
+                        this.swiper.destroy();
+                    }
+                }
+            }
+        }).mount('#app')
+    </script>
+</body>
+</html>

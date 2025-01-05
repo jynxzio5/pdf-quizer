@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>محول PDF إلى أسئلة</title>
+    <!-- إضافة الخطوط -->
+    <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700&display=swap" rel="stylesheet">
+    <!-- مكتبات Firebase -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-analytics-compat.js"></script>
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        :root {
+            --primary-color: #4a90e2;
+            --bg-color: #ffffff;
+            --text-color: #333333;
+            --border-color: #e0e0e0;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Tajawal', sans-serif;
+        }
+
+        body {
+            background-color: #f5f7fa;
+            color: var(--text-color);
+            line-height: 1.6;
+        }
+
+        .header {
+            background-color: var(--bg-color);
+            padding: 1rem 2rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: fixed;
+            top: 0;
+            right: 0;
+            left: 0;
+            z-index: 100;
+        }
+
+        .logo {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: var(--primary-color);
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 80px auto 2rem;
+            padding: 2rem;
+            background: var(--bg-color);
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .upload-section {
+            text-align: center;
+            padding: 2rem;
+            border: 2px dashed var(--border-color);
+            border-radius: 8px;
+            margin-bottom: 2rem;
+        }
+
+        .upload-icon {
+            font-size: 3rem;
+            color: var(--primary-color);
+            margin-bottom: 1rem;
+        }
+
+        .btn {
+            background: var(--primary-color);
+            color: white;
+            padding: 0.8rem 1.5rem;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: background 0.3s ease;
+        }
+
+        .btn:hover {
+            background: #357abd;
+        }
+
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        .form-label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: bold;
+        }
+
+        .form-control {
+            width: 100%;
+            padding: 0.8rem;
+            border: 1px solid var(--border-color);
+            border-radius: 5px;
+            font-size: 1rem;
+        }
+
+        select.form-control {
+            appearance: none;
+            background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+            background-repeat: no-repeat;
+            background-position: left 1rem center;
+            background-size: 1em;
+        }
+
+        .auth-button {
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 8px;
+            display: flex;
+            align-items: center;
+            color: var(--text-color);
+            transition: all 0.3s ease;
+        }
+
+        .auth-button:hover {
+            opacity: 0.8;
+        }
+
+        .auth-button i {
+            font-size: 24px;
+        }
+
+        #userProfile {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        #userProfile img {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+        }
+
+        .auth-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .auth-modal-content {
+            background: var(--bg-color);
+            padding: 2rem;
+            border-radius: 8px;
+            text-align: center;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .google-signin-button {
+            background: #fff;
+            color: #757575;
+            border: 1px solid #ddd;
+            padding: 12px 24px;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-top: 1rem;
+        }
+
+        .google-signin-button:hover {
+            background: #f5f5f5;
+        }
+
+        .google-signin-button img {
+            width: 18px;
+            height: 18px;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        /* تحسينات إضافية */
+        .page-title {
+            text-align: center;
+            margin-bottom: 2rem;
+            color: var(--primary-color);
+        }
+
+        .page-title i {
+            margin-left: 0.5rem;
+        }
+
+        .file-input-wrapper {
+            position: relative;
+            overflow: hidden;
+            display: inline-block;
+        }
+
+        .file-input-wrapper input[type="file"] {
+            position: absolute;
+            left: 0;
+            top: 0;
+            opacity: 0;
+            cursor: pointer;
+            width: 100%;
+            height: 100%;
+        }
+
+        .selected-file {
+            margin-top: 1rem;
+            padding: 0.5rem;
+            background: #f8f9fa;
+            border-radius: 4px;
+            font-size: 0.9rem;
+        }
+
+        .questions-list {
+            max-height: 500px;
+            overflow-y: auto;
+            padding: 20px;
+        }
+        
+        .questions-list h4 {
+            color: #2c3e50;
+            margin-top: 20px;
+        }
+        
+        .questions-list .alert-success {
+            background-color: #d4edda;
+            border-color: #c3e6cb;
+            color: #155724;
+            padding: 10px;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="logo">
+            <i class="fas fa-file-pdf"></i>
+            محول PDF إلى أسئلة
+        </div>
+        <button id="signInButton" class="auth-button" onclick="showAuthModal()">
+            <i class="fas fa-user"></i>
+        </button>
+        <div id="userProfile" class="hidden">
+            <img id="userAvatar" src="" alt="صورة المستخدم">
+            <span id="userName"></span>
+            <button onclick="signOut()" class="auth-button">
+                <i class="fas fa-sign-out-alt"></i>
+            </button>
+        </div>
+    </div>
+
+    <div class="container">
+        <h1 class="page-title">
+            <i class="fas fa-file-alt"></i>
+            محول PDF إلى أسئلة
+        </h1>
+        
+        <div class="form-group">
+            <label class="form-label">اختر ملف PDF</label>
+            <div class="upload-section">
+                <i class="fas fa-cloud-upload-alt upload-icon"></i>
+                <div class="file-input-wrapper">
+                    <input type="file" id="pdfFile" accept=".pdf" class="form-control" />
+                    <button class="btn">اختر ملف</button>
+                </div>
+                <div id="selectedFile" class="selected-file hidden"></div>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label class="form-label">نوع الأسئلة</label>
+            <select class="form-control" id="questionType">
+                <option value="multiple">اختيار من متعدد</option>
+                <option value="essay">أسئلة مقالية</option>
+                <option value="flashcards">بطاقات تعليمية</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label class="form-label">عدد الأسئلة</label>
+            <input type="number" id="questionCount" class="form-control" value="5" min="1" max="20" />
+        </div>
+
+        <button onclick="generateQuestions()" class="btn" style="width: 100%;">
+            <i class="fas fa-magic"></i>
+            توليد الأسئلة
+        </button>
+    </div>
+
+    <!-- قسم النتائج -->
+    <div id="results" class="mt-4" style="display: none;">
+        <div class="card">
+            <div class="card-body">
+                <h3 class="card-title mb-4">الأسئلة المولدة</h3>
+                <div id="questions-container" class="questions-list">
+                    <!-- سيتم إضافة الأسئلة هنا -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- نافذة تسجيل الدخول -->
+    <div id="authContainer" class="auth-modal">
+        <div class="auth-modal-content">
+            <h2>تسجيل الدخول</h2>
+            <p>قم بتسجيل الدخول للمتابعة</p>
+            <button onclick="signInWithGoogle()" class="google-signin-button">
+                <img src="https://www.google.com/favicon.ico" alt="Google Logo">
+                تسجيل الدخول باستخدام Google
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // تهيئة Firebase
+        const firebaseConfig = {
+            apiKey: "AIzaSyDGsJCR3KqM6fhfepju9J8KN6iHGE18G5M",
+            authDomain: "pdf-to-q.firebaseapp.com",
+            projectId: "pdf-to-q",
+            storageBucket: "pdf-to-q.firebasestorage.app",
+            messagingSenderId: "816286003902",
+            appId: "1:816286003902:web:c302a4274975819b13e4ef",
+            measurementId: "G-G6WKPB4CJW"
+        };
+
+        // تهيئة Firebase
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+
+        // مراقبة حالة تسجيل الدخول
+        auth.onAuthStateChanged(function(user) {
+            updateUIForUser(user);
+        });
+
+        // دالة تسجيل الدخول باستخدام Google
+        function signInWithGoogle() {
+            const provider = new firebase.auth.GoogleAuthProvider();
+            provider.addScope('profile');
+            provider.addScope('email');
+            
+            auth.signInWithPopup(provider)
+                .then((result) => {
+                    document.getElementById('authContainer').style.display = 'none';
+                    console.log('تم تسجيل الدخول بنجاح:', result.user.displayName);
+                })
+                .catch((error) => {
+                    console.error('خطأ في تسجيل الدخول:', error);
+                    let errorMessage = 'حدث خطأ أثناء تسجيل الدخول';
+                    
+                    switch (error.code) {
+                        case 'auth/popup-blocked':
+                            errorMessage = 'تم حظر النافذة المنبثقة. يرجى السماح بالنوافذ المنبثقة لموقعنا.';
+                            break;
+                        case 'auth/popup-closed-by-user':
+                            errorMessage = 'تم إغلاق نافذة تسجيل الدخول. يرجى المحاولة مرة أخرى.';
+                            break;
+                        case 'auth/unauthorized-domain':
+                            errorMessage = 'هذا النطاق غير مصرح له. يرجى التأكد من إضافة النطاق في إعدادات Firebase.';
+                            break;
+                    }
+                    
+                    alert(errorMessage);
+                });
+        }
+
+        // دالة تسجيل الخروج
+        function signOut() {
+            auth.signOut()
+                .then(() => {
+                    console.log('تم تسجيل الخروج بنجاح');
+                })
+                .catch((error) => {
+                    console.error('خطأ في تسجيل الخروج:', error);
+                });
+        }
+
+        // دالة إظهار نافذة تسجيل الدخول
+        function showAuthModal() {
+            document.getElementById('authContainer').style.display = 'flex';
+        }
+
+        // إضافة مستمع لإغلاق النافذة عند النقر خارجها
+        document.getElementById('authContainer').addEventListener('click', function(e) {
+            if (e.target === this) {
+                this.style.display = 'none';
+            }
+        });
+
+        // دالة تحديث واجهة المستخدم
+        function updateUIForUser(user) {
+            if (user) {
+                document.getElementById('signInButton').style.display = 'none';
+                const userProfile = document.getElementById('userProfile');
+                userProfile.style.display = 'flex';
+                userProfile.innerHTML = `
+                    <img src="${user.photoURL}" alt="صورة المستخدم">
+                    <span>${user.displayName}</span>
+                    <button onclick="signOut()" class="auth-button">
+                        <i class="fas fa-sign-out-alt"></i>
+                    </button>
+                `;
+            } else {
+                document.getElementById('signInButton').style.display = 'block';
+                document.getElementById('userProfile').style.display = 'none';
+            }
+        }
+
+        // مراقبة تغيير ملف PDF
+        document.getElementById('pdfFile').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                document.getElementById('selectedFile').textContent = file.name;
+                document.getElementById('selectedFile').classList.remove('hidden');
+            } else {
+                document.getElementById('selectedFile').classList.add('hidden');
+            }
+        });
+
+        // دالة توليد الأسئلة
+        async function generateQuestions() {
+            const user = auth.currentUser;
+            if (!user) {
+                showAuthModal();
+                return;
+            }
+
+            const fileInput = document.getElementById('pdfFile');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                alert('الرجاء اختيار ملف PDF');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('type', document.getElementById('questionType').value);
+            formData.append('count', document.getElementById('questionCount').value);
+
+            try {
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+                if (data.success) {
+                    displayQuestions(data.questions);
+                } else {
+                    alert('حدث خطأ: ' + data.error);
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                alert('حدث خطأ أثناء معالجة الملف');
+            }
+        }
+
+        function displayQuestions(questionsText) {
+            const container = document.getElementById('questions-container');
+            container.innerHTML = ''; // مسح المحتوى السابق
+            
+            // تنسيق النص وعرضه
+            const formattedText = questionsText.split('\n').map(line => {
+                if (line.startsWith('السؤال') || line.startsWith('البطاقة')) {
+                    return `<h4 class="mt-4">${line}</h4>`;
+                } else if (line.startsWith('أ)') || line.startsWith('ب)') || line.startsWith('ج)') || line.startsWith('د)')) {
+                    return `<div class="ms-4">${line}</div>`;
+                } else if (line.startsWith('الإجابة')) {
+                    return `<div class="alert alert-success mt-2">${line}</div>`;
+                } else {
+                    return `<div>${line}</div>`;
+                }
+            }).join('');
+            
+            container.innerHTML = formattedText;
+            document.getElementById('results').style.display = 'block';
+        }
+    </script>
+</body>
+</html>
