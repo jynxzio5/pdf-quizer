@@ -1,11 +1,6 @@
 from flask import Flask, render_template, request, jsonify
 import pdfplumber
 import os
-import nltk
-from nltk.tokenize import sent_tokenize
-from nltk.corpus import stopwords
-from nltk.tokenize import word_tokenize
-import random
 import datetime
 from flask_cors import CORS
 import openai
@@ -15,16 +10,6 @@ import logging
 # إعداد logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# Download required NLTK data
-try:
-    nltk.data.find('tokenizers/punkt')
-except LookupError:
-    nltk.download('punkt')
-try:
-    nltk.data.find('corpora/stopwords')
-except LookupError:
-    nltk.download('stopwords')
 
 app = Flask(__name__)
 CORS(app)
