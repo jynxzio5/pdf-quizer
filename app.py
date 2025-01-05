@@ -51,14 +51,16 @@ CORS(app)
 # تكوين Flask للـ production
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 app.config['UPLOAD_FOLDER'] = '/tmp'  # استخدام مجلد tmp في Vercel
-app.config['DEBUG'] = False  # تعطيل وضع التصحيح في الإنتاج
 
 # تكوين OpenAI
 openai.api_key = os.getenv('OPENAI_API_KEY')
+if not openai.api_key:
+    raise ValueError("OpenAI API key not found in environment variables")
 
 # التعامل مع الأخطاء
 @app.errorhandler(500)
 def internal_error(error):
+    print(f"Internal error: {str(error)}")  # إضافة سجل للخطأ
     return jsonify({'error': 'حدث خطأ داخلي في الخادم'}), 500
 
 @app.errorhandler(404)
@@ -160,11 +162,8 @@ def save_to_firebase(questions, original_filename):
 
 @app.route('/')
 def index():
-    try:
-        return render_template('index.html')
-    except Exception as e:
-        app.logger.error(f'خطأ في عرض الصفحة الرئيسية: {str(e)}')
-        return jsonify({'error': 'حدث خطأ في عرض الصفحة'}), 500
+    """الصفحة الرئيسية"""
+    return render_template('index.html')
 
 @app.route('/auth/callback')
 def auth_callback():
@@ -254,10 +253,8 @@ def upload_file():
         return jsonify({'error': f'حدث خطأ: {str(e)}'}), 500
 
 if __name__ == '__main__':
-    # تشغيل التطبيق محلياً فقط
-    app.run(debug=True)
+    app.run(debug=False)  # تعطيل وضع التصحيح في الإنتاج
 else:
-    # تكوين logging للإنتاج
-    import logging
-    logging.basicConfig(level=logging.INFO)
-    app.logger.setLevel(logging.INFO)
+    # تهيئة التطبيق للإنتاج
+    app.config['ENV'] = 'production'
+    app.config['DEBUG'] = False
