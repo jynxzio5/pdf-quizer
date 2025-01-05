@@ -27,6 +27,7 @@ ENV/
 
 # Environment variables
 .env
+serviceAccountKey.json
 
 # IDE
 .idea/
