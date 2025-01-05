@@ -14,6 +14,7 @@ import json
 from flask_cors import CORS
 import openai
 from werkzeug.utils import secure_filename
+import logging
 
 try:
     # Initialize Firebase with explicit path
@@ -52,19 +53,25 @@ CORS(app)
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 app.config['UPLOAD_FOLDER'] = '/tmp'  # استخدام مجلد tmp في Vercel
 
+# إعداد logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # تكوين OpenAI
 openai.api_key = os.getenv('OPENAI_API_KEY')
 if not openai.api_key:
+    logger.error("OpenAI API key not found in environment variables")
     raise ValueError("OpenAI API key not found in environment variables")
 
 # التعامل مع الأخطاء
 @app.errorhandler(500)
 def internal_error(error):
-    print(f"Internal error: {str(error)}")  # إضافة سجل للخطأ
-    return jsonify({'error': 'حدث خطأ داخلي في الخادم'}), 500
+    logger.error(f"Internal error: {str(error)}")
+    return jsonify({'error': 'حدث خطأ داخلي في الخادم', 'details': str(error)}), 500
 
 @app.errorhandler(404)
 def not_found_error(error):
+    logger.error(f"Page not found: {str(error)}")
     return jsonify({'error': 'الصفحة غير موجودة'}), 404
 
 def extract_text_from_pdf(file_path):
@@ -76,7 +83,7 @@ def extract_text_from_pdf(file_path):
                 text += page.extract_text() or ""
         return text
     except Exception as e:
-        print(f"خطأ في استخراج النص: {str(e)}")
+        logger.error(f"خطأ في استخراج النص: {str(e)}")
         return None
 
 def generate_questions_with_openai(text, num_questions=5, question_type='multiple_choice'):
@@ -132,7 +139,7 @@ def generate_questions_with_openai(text, num_questions=5, question_type='multipl
 
         return response.choices[0].message.content
     except Exception as e:
-        print(f"خطأ في توليد الأسئلة: {str(e)}")
+        logger.error(f"خطأ في توليد الأسئلة: {str(e)}")
         return None
 
 def save_to_firebase(questions, original_filename):
@@ -157,13 +164,17 @@ def save_to_firebase(questions, original_filename):
         doc_ref.set(doc_data)
         return doc_id
     except Exception as e:
-        print(f"Error saving to Firebase: {str(e)}")
+        logger.error(f"Error saving to Firebase: {str(e)}")
         return None
 
 @app.route('/')
 def index():
     """الصفحة الرئيسية"""
-    return render_template('index.html')
+    try:
+        return render_template('index.html')
+    except Exception as e:
+        logger.error(f"Error rendering index page: {str(e)}")
+        return jsonify({'error': 'حدث خطأ في عرض الصفحة الرئيسية'}), 500
 
 @app.route('/auth/callback')
 def auth_callback():
@@ -186,7 +197,7 @@ def get_questions_history():
         
         return jsonify({'history': history})
     except Exception as e:
-        print(f"Error getting history: {str(e)}")
+        logger.error(f"Error getting history: {str(e)}")
         return jsonify({'error': 'حدث خطأ أثناء تحميل السجل'}), 500
 
 @app.route('/questions/<document_id>', methods=['GET'])
@@ -200,56 +211,80 @@ def get_questions(document_id):
         else:
             return jsonify({'error': 'لم يتم العثور على الأسئلة'}), 404
     except Exception as e:
-        print(f"Error getting questions: {str(e)}")
+        logger.error(f"Error getting questions: {str(e)}")
         return jsonify({'error': 'حدث خطأ أثناء استرجاع البيانات'}), 500
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
     """معالجة رفع الملف وتوليد الأسئلة."""
-    if 'file' not in request.files:
-        return jsonify({'error': 'لم يتم تحميل ملف'}), 400
-    
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({'error': 'لم يتم اختيار ملف'}), 400
-    
-    if not file.filename.endswith('.pdf'):
-        return jsonify({'error': 'يجب رفع ملف PDF فقط'}), 400
-
     try:
+        # التحقق من وجود الملف
+        if 'file' not in request.files:
+            logger.error("No file part in request")
+            return jsonify({'error': 'لم يتم تحميل ملف'}), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            logger.error("No selected file")
+            return jsonify({'error': 'لم يتم اختيار ملف'}), 400
+        
+        if not file.filename.endswith('.pdf'):
+            logger.error("Invalid file type")
+            return jsonify({'error': 'يجب رفع ملف PDF فقط'}), 400
+
+        # التحقق من معلمات الطلب
+        question_type = request.form.get('type')
+        if not question_type:
+            logger.error("No question type specified")
+            return jsonify({'error': 'يجب تحديد نوع الأسئلة'}), 400
+            
+        try:
+            num_questions = int(request.form.get('count', 5))
+        except ValueError:
+            logger.error("Invalid question count")
+            return jsonify({'error': 'عدد الأسئلة غير صالح'}), 400
+
         # حفظ الملف
         filename = secure_filename(file.filename)
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(filepath)
+        logger.info(f"File saved: {filepath}")
 
         # استخراج النص
         text = extract_text_from_pdf(filepath)
         if not text:
+            logger.error("Failed to extract text from PDF")
             return jsonify({'error': 'فشل في استخراج النص من الملف'}), 400
 
-        # الحصول على معلمات الطلب
-        question_type = request.form.get('type', 'multiple_choice')
-        num_questions = int(request.form.get('count', 5))
-
-        # توليد الأسئلة باستخدام OpenAI
+        # توليد الأسئلة
         questions = generate_questions_with_openai(text, num_questions, question_type)
         if not questions:
+            logger.error("Failed to generate questions")
             return jsonify({'error': 'فشل في توليد الأسئلة'}), 500
 
         # حفظ في Firebase
-        document_id = save_to_firebase(questions, file.filename)
+        try:
+            document_id = save_to_firebase(questions, file.filename)
+            logger.info(f"Questions saved to Firebase with ID: {document_id}")
+        except Exception as e:
+            logger.error(f"Failed to save to Firebase: {str(e)}")
+            # نستمر حتى لو فشل الحفظ في Firebase
 
         # حذف الملف المؤقت
-        os.remove(filepath)
+        try:
+            os.remove(filepath)
+            logger.info(f"Temporary file removed: {filepath}")
+        except Exception as e:
+            logger.error(f"Failed to remove temporary file: {str(e)}")
 
         return jsonify({
             'success': True,
             'questions': questions,
-            'document_id': document_id
+            'document_id': document_id if 'document_id' in locals() else None
         })
 
     except Exception as e:
-        print(f"Error: {str(e)}")
+        logger.error(f"Error in upload_file: {str(e)}")
         return jsonify({'error': f'حدث خطأ: {str(e)}'}), 500
 
 if __name__ == '__main__':
