@@ -6,10 +6,35 @@ from flask_cors import CORS
 import openai
 from werkzeug.utils import secure_filename
 import logging
+import firebase_admin
+from firebase_admin import credentials, firestore, auth
+import uuid
 
 # إعداد logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# تهيئة Firebase
+try:
+    cred = credentials.Certificate({
+        "type": "service_account",
+        "project_id": os.getenv('FIREBASE_PROJECT_ID'),
+        "private_key": os.getenv('FIREBASE_PRIVATE_KEY').replace('\\n', '\n') if os.getenv('FIREBASE_PRIVATE_KEY') else None,
+        "client_email": os.getenv('FIREBASE_CLIENT_EMAIL')
+    })
+    
+    if not all([os.getenv('FIREBASE_PROJECT_ID'), os.getenv('FIREBASE_PRIVATE_KEY'), os.getenv('FIREBASE_CLIENT_EMAIL')]):
+        logger.warning("Firebase credentials not found in environment variables. Authentication will be disabled.")
+        firebase_enabled = False
+    else:
+        if not firebase_admin._apps:
+            firebase_admin.initialize_app(cred)
+        db = firestore.client()
+        firebase_enabled = True
+        logger.info("Firebase initialized successfully!")
+except Exception as e:
+    logger.error(f"Error initializing Firebase: {str(e)}")
+    firebase_enabled = False
 
 app = Flask(__name__)
 CORS(app)
@@ -34,6 +59,40 @@ def internal_error(error):
 def not_found_error(error):
     logger.error(f"Page not found: {str(error)}")
     return jsonify({'error': 'الصفحة غير موجودة'}), 404
+
+def verify_firebase_token(id_token):
+    """التحقق من صحة رمز المصادقة."""
+    try:
+        if not firebase_enabled:
+            return None
+        decoded_token = auth.verify_id_token(id_token)
+        return decoded_token
+    except Exception as e:
+        logger.error(f"Error verifying token: {str(e)}")
+        return None
+
+def save_to_firebase(user_id, questions, original_filename):
+    """حفظ الأسئلة في Firebase."""
+    try:
+        if not firebase_enabled:
+            logger.warning("Firebase is disabled. Questions will not be saved.")
+            return None
+
+        doc_id = str(uuid.uuid4())
+        doc_data = {
+            'user_id': user_id,
+            'questions': questions,
+            'filename': original_filename,
+            'timestamp': datetime.datetime.utcnow().isoformat(),
+        }
+        
+        doc_ref = db.collection('questions').document(doc_id)
+        doc_ref.set(doc_data)
+        logger.info(f"Questions saved to Firebase with ID: {doc_id}")
+        return doc_id
+    except Exception as e:
+        logger.error(f"Error saving to Firebase: {str(e)}")
+        return None
 
 def extract_text_from_pdf(file_path):
     """استخراج النص من ملف PDF."""
@@ -105,10 +164,84 @@ def index():
         logger.error(f"Error rendering index page: {str(e)}")
         return jsonify({'error': 'حدث خطأ في عرض الصفحة الرئيسية'}), 500
 
+@app.route('/auth/verify', methods=['POST'])
+def verify_token():
+    """التحقق من صحة رمز المصادقة."""
+    try:
+        if not firebase_enabled:
+            return jsonify({'error': 'المصادقة معطلة حالياً'}), 503
+
+        id_token = request.json.get('token')
+        if not id_token:
+            return jsonify({'error': 'لم يتم توفير رمز المصادقة'}), 400
+
+        decoded_token = verify_firebase_token(id_token)
+        if not decoded_token:
+            return jsonify({'error': 'رمز المصادقة غير صالح'}), 401
+
+        return jsonify({
+            'user_id': decoded_token['uid'],
+            'email': decoded_token.get('email', ''),
+            'name': decoded_token.get('name', '')
+        })
+    except Exception as e:
+        logger.error(f"Error verifying token: {str(e)}")
+        return jsonify({'error': 'حدث خطأ في التحقق من الرمز'}), 500
+
+@app.route('/questions/history', methods=['GET'])
+def get_questions_history():
+    """استرجاع سجل الأسئلة للمستخدم."""
+    try:
+        if not firebase_enabled:
+            return jsonify({'error': 'هذه الميزة غير متوفرة حالياً'}), 503
+
+        id_token = request.headers.get('Authorization', '').replace('Bearer ', '')
+        if not id_token:
+            return jsonify({'error': 'يجب تسجيل الدخول'}), 401
+
+        decoded_token = verify_firebase_token(id_token)
+        if not decoded_token:
+            return jsonify({'error': 'جلسة غير صالحة'}), 401
+
+        user_id = decoded_token['uid']
+        questions_ref = db.collection('questions')
+        docs = questions_ref.where('user_id', '==', user_id).order_by(
+            'timestamp', direction=firestore.Query.DESCENDING
+        ).limit(10).get()
+
+        history = []
+        for doc in docs:
+            data = doc.to_dict()
+            history.append({
+                'id': doc.id,
+                'filename': data.get('filename'),
+                'timestamp': data.get('timestamp'),
+                'questions': data.get('questions')
+            })
+
+        return jsonify({'history': history})
+    except Exception as e:
+        logger.error(f"Error getting history: {str(e)}")
+        return jsonify({'error': 'حدث خطأ أثناء تحميل السجل'}), 500
+
 @app.route('/upload', methods=['POST'])
 def upload_file():
     """معالجة رفع الملف وتوليد الأسئلة."""
     try:
+        # التحقق من المصادقة
+        if firebase_enabled:
+            id_token = request.headers.get('Authorization', '').replace('Bearer ', '')
+            if not id_token:
+                return jsonify({'error': 'يجب تسجيل الدخول'}), 401
+
+            decoded_token = verify_firebase_token(id_token)
+            if not decoded_token:
+                return jsonify({'error': 'جلسة غير صالحة'}), 401
+
+            user_id = decoded_token['uid']
+        else:
+            user_id = None
+
         # التحقق من وجود الملف
         if 'file' not in request.files:
             logger.error("No file part in request")
@@ -153,6 +286,15 @@ def upload_file():
             logger.error("Failed to generate questions")
             return jsonify({'error': 'فشل في توليد الأسئلة'}), 500
 
+        # حفظ في Firebase إذا كان المستخدم مسجل الدخول
+        document_id = None
+        if user_id:
+            try:
+                document_id = save_to_firebase(user_id, questions, file.filename)
+                logger.info(f"Questions saved to Firebase with ID: {document_id}")
+            except Exception as e:
+                logger.error(f"Failed to save to Firebase: {str(e)}")
+
         # حذف الملف المؤقت
         try:
             os.remove(filepath)
@@ -162,7 +304,8 @@ def upload_file():
 
         return jsonify({
             'success': True,
-            'questions': questions
+            'questions': questions,
+            'document_id': document_id
         })
 
     except Exception as e:
