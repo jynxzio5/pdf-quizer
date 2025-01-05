@@ -140,7 +140,11 @@ Format each flashcard like this:
 السؤال: [Front of card]
 الإجابة: [Back of card]"""
 
-        response = openai.ChatCompletion.create(
+        client = openai.OpenAI(
+            api_key=os.getenv('OPENAI_API_KEY')
+        )
+
+        response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "أنت مساعد متخصص في توليد أسئلة تعليمية باللغة العربية."},
