@@ -16,25 +16,33 @@ import openai
 from werkzeug.utils import secure_filename
 import logging
 
+# إعداد logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 try:
-    # Initialize Firebase with explicit path
-    service_account_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'serviceAccountKey.json')
+    # تهيئة Firebase باستخدام متغيرات البيئة
+    cred = credentials.Certificate({
+        "type": "service_account",
+        "project_id": os.getenv('FIREBASE_PROJECT_ID'),
+        "private_key": os.getenv('FIREBASE_PRIVATE_KEY').replace('\\n', '\n') if os.getenv('FIREBASE_PRIVATE_KEY') else None,
+        "client_email": os.getenv('FIREBASE_CLIENT_EMAIL')
+    })
     
-    # Load and validate the service account file
-    with open(service_account_path, 'r') as f:
-        service_account_info = json.load(f)
-    
-    cred = credentials.Certificate(service_account_info)
-    
-    # Check if Firebase app is already initialized
-    if not firebase_admin._apps:
-        firebase_admin.initialize_app(cred)
-    
-    db = firestore.client()
-    print("Firebase initialized successfully!")
+    # التحقق من وجود المتغيرات المطلوبة
+    if not all([os.getenv('FIREBASE_PROJECT_ID'), os.getenv('FIREBASE_PRIVATE_KEY'), os.getenv('FIREBASE_CLIENT_EMAIL')]):
+        logger.warning("Firebase credentials not found in environment variables. Some features may be disabled.")
+        firebase_enabled = False
+    else:
+        # تهيئة Firebase فقط إذا لم يتم تهيئته من قبل
+        if not firebase_admin._apps:
+            firebase_admin.initialize_app(cred)
+        db = firestore.client()
+        firebase_enabled = True
+        logger.info("Firebase initialized successfully!")
 except Exception as e:
-    print(f"Error initializing Firebase: {str(e)}")
-    raise e
+    logger.error(f"Error initializing Firebase: {str(e)}")
+    firebase_enabled = False
 
 # Download required NLTK data
 try:
@@ -52,10 +60,6 @@ CORS(app)
 # تكوين Flask للـ production
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 app.config['UPLOAD_FOLDER'] = '/tmp'  # استخدام مجلد tmp في Vercel
-
-# إعداد logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # تكوين OpenAI
 openai.api_key = os.getenv('OPENAI_API_KEY')
@@ -143,25 +147,22 @@ def generate_questions_with_openai(text, num_questions=5, question_type='multipl
         return None
 
 def save_to_firebase(questions, original_filename):
+    """حفظ الأسئلة في Firebase."""
     try:
-        # Create a new document with a unique ID
+        if not firebase_enabled:
+            logger.warning("Firebase is disabled. Questions will not be saved.")
+            return None
+
         doc_id = str(uuid.uuid4())
-        doc_ref = db.collection('questions').document(doc_id)
-        
-        # Convert datetime to string to make it JSON serializable
-        current_time = datetime.datetime.now().isoformat()
-        
-        # Prepare the document data
         doc_data = {
-            'id': doc_id,
             'questions': questions,
-            'original_filename': original_filename,
-            'created_at': current_time,
-            'updated_at': current_time
+            'filename': original_filename,
+            'timestamp': datetime.datetime.utcnow().isoformat(),
         }
         
-        # Save to Firestore
+        doc_ref = db.collection('questions').document(doc_id)
         doc_ref.set(doc_data)
+        logger.info(f"Questions saved to Firebase with ID: {doc_id}")
         return doc_id
     except Exception as e:
         logger.error(f"Error saving to Firebase: {str(e)}")
@@ -182,17 +183,23 @@ def auth_callback():
 
 @app.route('/questions/history', methods=['GET'])
 def get_questions_history():
+    """استرجاع سجل الأسئلة."""
     try:
-        # Get all documents from the questions collection
-        docs = db.collection('questions').stream()
+        if not firebase_enabled:
+            logger.warning("Firebase is disabled. Cannot retrieve history.")
+            return jsonify({'history': []}), 200
+
+        questions_ref = db.collection('questions')
+        docs = questions_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).limit(10).get()
         
         history = []
         for doc in docs:
             data = doc.to_dict()
             history.append({
-                'id': data['id'],
-                'original_filename': data['original_filename'],
-                'created_at': data['created_at']
+                'id': doc.id,
+                'filename': data.get('filename'),
+                'timestamp': data.get('timestamp'),
+                'questions': data.get('questions')
             })
         
         return jsonify({'history': history})
@@ -202,10 +209,14 @@ def get_questions_history():
 
 @app.route('/questions/<document_id>', methods=['GET'])
 def get_questions(document_id):
+    """استرجاع الأسئلة بواسطة معرف المستند."""
     try:
+        if not firebase_enabled:
+            logger.warning("Firebase is disabled. Cannot retrieve questions.")
+            return jsonify({'error': 'هذه الميزة غير متوفرة حالياً'}), 503
+
         doc_ref = db.collection('questions').document(document_id)
         doc = doc_ref.get()
-        
         if doc.exists:
             return jsonify(doc.to_dict())
         else:
