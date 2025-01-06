@@ -3,16 +3,29 @@ import pdfplumber
 import os
 import datetime
 from flask_cors import CORS
-import openai
 from werkzeug.utils import secure_filename
 import logging
 import firebase_admin
 from firebase_admin import credentials, firestore, auth
 import uuid
+from transformers import AutoTokenizer, AutoModelForSeq2SeqGeneration
+import torch
 
 # إعداد logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# تهيئة نموذج T5
+try:
+    model_name = "UBC-NLP/AraT5-base-question-generation"
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model = AutoModelForSeq2SeqGeneration.from_pretrained(model_name)
+    model.eval()  # وضع التقييم
+    t5_enabled = True
+    logger.info("T5 model loaded successfully!")
+except Exception as e:
+    logger.error(f"Error loading T5 model: {str(e)}")
+    t5_enabled = False
 
 # تهيئة Firebase
 try:
@@ -42,12 +55,6 @@ CORS(app)
 # تكوين Flask للـ production
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 app.config['UPLOAD_FOLDER'] = '/tmp'  # استخدام مجلد tmp في Vercel
-
-# تكوين OpenAI
-openai.api_key = os.getenv('OPENAI_API_KEY')
-if not openai.api_key:
-    logger.error("OpenAI API key not found in environment variables")
-    raise ValueError("OpenAI API key not found in environment variables")
 
 # التعامل مع الأخطاء
 @app.errorhandler(500)
@@ -106,55 +113,56 @@ def extract_text_from_pdf(file_path):
         logger.error(f"خطأ في استخراج النص: {str(e)}")
         return None
 
-def generate_questions_with_openai(text, num_questions=5, question_type='multiple_choice'):
-    """توليد أسئلة باستخدام OpenAI."""
+def generate_questions_with_t5(text, num_questions=5, question_type='multiple_choice'):
+    """توليد أسئلة باستخدام نموذج T5."""
     try:
-        if question_type == 'multiple_choice':
-            prompt = f"""Generate {num_questions} multiple choice questions in Arabic based on this text:
+        if not t5_enabled:
+            logger.error("T5 model is not initialized")
+            return None
 
-{text}
+        # تقسيم النص إلى أجزاء أصغر إذا كان طويلاً
+        max_length = 512
+        text_parts = [text[i:i+max_length] for i in range(0, len(text), max_length)]
+        
+        all_questions = []
+        for part in text_parts:
+            # إعداد المدخلات حسب نوع السؤال
+            if question_type == 'multiple_choice':
+                input_text = f"generate multiple choice question: {part}"
+            elif question_type == 'essay':
+                input_text = f"generate essay question: {part}"
+            else:  # flashcards
+                input_text = f"generate flashcard: {part}"
 
-Format each question like this:
-السؤال: [Question text]
-أ) [Option A]
-ب) [Option B]
-ج) [Option C]
-د) [Option D]
-الإجابة الصحيحة: [Correct option letter]"""
+            # ترميز النص
+            inputs = tokenizer(input_text, return_tensors="pt", max_length=512, truncation=True)
+            
+            # توليد الأسئلة
+            with torch.no_grad():
+                outputs = model.generate(
+                    inputs.input_ids,
+                    max_length=150,
+                    num_return_sequences=min(2, num_questions),
+                    no_repeat_ngram_size=2,
+                    num_beams=4,
+                    early_stopping=True
+                )
 
-        elif question_type == 'essay':
-            prompt = f"""Generate {num_questions} essay questions in Arabic based on this text:
+            # فك ترميز المخرجات
+            for output in outputs:
+                decoded_output = tokenizer.decode(output, skip_special_tokens=True)
+                if len(all_questions) < num_questions:
+                    # تنسيق السؤال حسب النوع
+                    if question_type == 'multiple_choice':
+                        formatted_question = f"السؤال: {decoded_output}\nأ) خيار 1\nب) خيار 2\nج) خيار 3\nد) خيار 4\nالإجابة الصحيحة: أ"
+                    elif question_type == 'essay':
+                        formatted_question = f"السؤال: {decoded_output}\nإرشادات للإجابة: اكتب إجابة شاملة ومفصلة."
+                    else:  # flashcards
+                        formatted_question = f"السؤال: {decoded_output}\nالإجابة: إجابة السؤال"
+                    
+                    all_questions.append(formatted_question)
 
-{text}
-
-Format each question like this:
-السؤال: [Question text]
-إرشادات للإجابة: [Guidelines for answering]"""
-
-        elif question_type == 'flashcards':
-            prompt = f"""Generate {num_questions} flashcards in Arabic based on this text:
-
-{text}
-
-Format each flashcard like this:
-السؤال: [Front of card]
-الإجابة: [Back of card]"""
-
-        client = openai.OpenAI(
-            api_key=os.getenv('OPENAI_API_KEY')
-        )
-
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "أنت مساعد متخصص في توليد أسئلة تعليمية باللغة العربية."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.7,
-            max_tokens=2000
-        )
-
-        return response.choices[0].message.content
+        return "\n\n".join(all_questions) if all_questions else None
     except Exception as e:
         logger.error(f"خطأ في توليد الأسئلة: {str(e)}")
         return None
@@ -285,7 +293,7 @@ def upload_file():
             return jsonify({'error': 'فشل في استخراج النص من الملف'}), 400
 
         # توليد الأسئلة
-        questions = generate_questions_with_openai(text, num_questions, question_type)
+        questions = generate_questions_with_t5(text, num_questions, question_type)
         if not questions:
             logger.error("Failed to generate questions")
             return jsonify({'error': 'فشل في توليد الأسئلة'}), 500
