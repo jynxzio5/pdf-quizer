@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 # تهيئة نموذج T5
 try:
-    model_name = "UBC-NLP/AraT5-base-question-generation"
+    model_name = "google/mt5-small"  # نموذج أخف
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModelForSeq2SeqGeneration.from_pretrained(model_name)
     model.eval()  # وضع التقييم
